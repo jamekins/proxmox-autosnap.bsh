@@ -2,7 +2,7 @@
 
 # Bash STRICT MODE
 # Use for debugging- exits at ANY non-zero return code
-set -euo pipefail
+#set -euo pipefail
 
 # Bash DEBUG MODE
 #!/bin/bash -x
@@ -98,6 +98,7 @@ function create ()
 
 	# Loop through a comma-separated variable
 	for VM in ${VMID//,/ };do
+		echo "Working on $VM..."
 
 		# Check the exclusion list
 		RC=`echo $EXCLUDE | grep $VM >/dev/null ; echo $?`
@@ -121,18 +122,26 @@ function destroy ()
 
 	SNAPLIST=$TEMP_DIR/snaplist
 	for VM in ${VMID//,/ };do
-		qm listsnapshot $VM | grep $SNAPTYPE | awk '{print $2}' > $SNAPLIST
+		echo "Working on $VM..."
+
+		# Check the exclusion list
+		RC=`echo $EXCLUDE | grep $VM >/dev/null ; echo $?`
+		if [ $RC -ne 0 ];then
+
+			qm listsnapshot $VM | grep $SNAPTYPE | awk '{print $2}' > $SNAPLIST
 		
-		# Make a list of snapshots to delete
-		# 
-		TOTALSNAPS=`wc -l $SNAPLIST | awk '{print $1}'`
-		SNAPSTODELETE=$((TOTALSNAPS - KEEP))
-		if [ $SNAPSTODELETE -le 0 ];then SNAPSTODELETE=0;fi
-		echo "VM=$VM, snap type=$SNAPTYPE, keep=$KEEP, total snaps=$TOTALSNAPS, snaps to delete=$SNAPSTODELETE"
-		if [ $SNAPSTODELETE -gt 0 ];then
-			head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 echo "qm delsnapshot $VM"
-			head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 qm delsnapshot $VM 
-			#xargs -n1 qm delsnapshot $VMID < $SNAPLIST
+			# Make a list of snapshots to delete
+			# 
+			TOTALSNAPS=`wc -l $SNAPLIST | awk '{print $1}'`
+			SNAPSTODELETE=$((TOTALSNAPS - KEEP))
+			if [ $SNAPSTODELETE -le 0 ];then SNAPSTODELETE=0;fi
+			echo "VM=$VM, snap type=$SNAPTYPE, keep=$KEEP, total snaps=$TOTALSNAPS, snaps to delete=$SNAPSTODELETE"
+			if [ $SNAPSTODELETE -gt 0 ];then
+				head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 echo "qm delsnapshot $VM"
+				head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 qm delsnapshot $VM 
+			fi
+		else
+			echo "$VM is excluded"
 		fi
 
 	done
