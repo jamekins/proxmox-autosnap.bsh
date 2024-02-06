@@ -1,0 +1,230 @@
+#!/bin/bash
+
+# Bash STRICT MODE
+# Use for debugging- exits at ANY non-zero return code
+set -euo pipefail
+
+# Bash DEBUG MODE
+#!/bin/bash -x
+
+# Program name
+PGM_NAME=$(basename "$(readlink -f "$0")")
+
+YEAR=`date +%Y`                                 # 4 digit current Year
+MTH=`date +%m`                                  # 2 digit current Month
+DAY=`date +%d`                                  # 2 digit current Day
+HOUR=`date +%H`                                 # 2 digit current Hour
+MIN=`date +%M`                                  # 2 digit current Minute
+RUN_DATE=$YEAR$MTH$DAY                          # Present yearmonthday
+RUN_TIME=$RUN_DATE$HOUR$MIN
+TIMESTAMP=${YEAR}-${MTH}-${DAY}_${HOUR}-${MIN}
+
+PATH=/usr/local/bin:/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/sbin
+SCRIPT_DIR="$(dirname "$(readlink -f "$0")")"
+TEMP_DIR=`mktemp -d`
+#MAIL_TO=jamie
+
+# Files
+#LOG="$SCRIPT_DIR/$PGM_NAME-$RUN_TIME.log"
+LOG="$SCRIPT_DIR/$PGM_NAME.log"
+#ERROR_LOG="$SCRIPT_DIR/log/$PGM_NAME-ERROR-$RUN_TIME.log"
+
+# Flags
+# If something bad happens, this gets changed to 1 and an e-mail gets sent in the abnormal_exit function
+EMAIL_REPORT=0         
+
+
+################################################################
+# Clean up temporary files and directories and exit
+#
+function clean_up_and_exit ()
+{
+  echo "" | tee -ai $LOG
+  #echo "`date` - Function clean_up_and_exit - START" | tee -ai $LOG
+  rm -rfv $TEMP_DIR | tee -ai $LOG
+  #echo "`date` - Function clean_up_and_exit - END" | tee -ai $LOG
+  exit
+}
+
+
+#################################################################
+# Email the error log if errors occured
+#
+function abnormal_exit ()
+{
+  echo "" | tee -ai $LOG
+  echo "`date` - Function abnormal_exit START" | tee -ai $LOG
+  MAIL_SUB="$PGM_NAME on `hostname` exited with errors"
+  mail -v -s "$MAIL_SUB" "$MAIL_TO" < "$ERROR_LOG"
+  echo "`date` - Function abnormal_exit END" | tee -ai $LOG
+  clean_up_and_exit
+}
+
+#################################################################
+# Exit immediately if this program is already running
+#
+for pid in $(pidof -x $PGM_NAME); do
+    if [ $pid != $$ ]; then
+        echo "[$(date)] : $PGM_NAME : Process is already running with PID $pid"
+        exit 1
+    fi
+done
+
+
+# Clean up temporary files if script is terminated prematurely
+trap "clean_up_and_exit" SIGHUP SIGINT SIGTERM
+
+function list ()
+{
+	if [ $RUNNING -eq 0 ];then
+		# s/\n/,/g replaces newlines with commas
+		# s/.$// removes the trailing comma	
+		VMID=`qm list | tail -n+2  | awk '{print $1}' | sed -z 's/\n/,/g;s/.$//'`
+	fi
+	if [ $RUNNING -eq 1 ];then 
+		VMID=`qm list | grep running | awk '{print $1}' | sed -z 's/\n/,/g;s/.$//'`
+	fi
+	echo "List is $VMID"
+
+}
+
+function create ()
+{
+	echo VMID=$VMID
+	if [ $VMID == "all" ];then
+		list
+	fi
+	
+
+	# Loop through a comma-separated variable
+	for VM in ${VMID//,/ };do
+
+		# Check the exclusion list
+		RC=`echo $EXCLUDE | grep $VM >/dev/null ; echo $?`
+		if [ $RC -ne 0 ];then
+			echo "qm snapshot $VM auto-$TIMESTAMP --description $SNAPTYPE"
+			qm snapshot $VM auto-$TIMESTAMP --description $SNAPTYPE
+		else
+			echo "$VM is excluded"
+		fi
+	done
+}
+
+function destroy ()
+{
+	echo "Destroy function"
+
+	echo VMID=$VMID
+	if [ $VMID == "all" ];then
+		list
+	fi
+
+	SNAPLIST=$TEMP_DIR/snaplist
+	for VM in ${VMID//,/ };do
+		qm listsnapshot $VM | grep $SNAPTYPE | awk '{print $2}' > $SNAPLIST
+		
+		# Make a list of snapshots to delete
+		# 
+		TOTALSNAPS=`wc -l $SNAPLIST | awk '{print $1}'`
+		SNAPSTODELETE=$((TOTALSNAPS - KEEP))
+		if [ $SNAPSTODELETE -le 0 ];then SNAPSTODELETE=0;fi
+		echo "VM=$VM, snap type=$SNAPTYPE, keep=$KEEP, total snaps=$TOTALSNAPS, snaps to delete=$SNAPSTODELETE"
+		if [ $SNAPSTODELETE -gt 0 ];then
+			head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 echo "qm delsnapshot $VM"
+			head -n $SNAPSTODELETE < $SNAPLIST | xargs -n1 qm delsnapshot $VM 
+			#xargs -n1 qm delsnapshot $VMID < $SNAPLIST
+		fi
+
+	done
+
+}
+
+#################
+#     MAIN
+#################
+
+# Defaults
+CREATE=0
+DESTROY=0
+LIST=0
+VMID=""
+ALL=0
+RUNNING=0
+SNAPTYPE=hourly
+KEEP=100
+EXCLUDE=0
+
+# Read argument list
+POSITIONAL_ARGS=()
+while [[ $# -gt 0 ]]; do
+	case $1 in
+		-c| --create)
+			CREATE=1
+			shift
+			;;
+		-d| --destroy)
+			DESTROY=1
+			shift
+			;;
+		-l| --list)
+			LIST=1
+			shift
+			;;
+		-v| --vmid)
+			VMID="$2"
+			shift
+			shift
+			;;
+		-r| --running)
+			RUNNING=1
+			shift
+			;;
+		-t| --type)
+			SNAPTYPE="$2"
+			shift
+			;;
+		-k| --keep)
+			KEEP=$2
+			shift
+			;;
+		-e| --exclude)
+			EXCLUDE=$2
+			shift
+			;;
+		-*|--*)
+			echo "Unknown option $1"
+			exit 1
+			;;
+		*)
+			POSITIONAL_ARGS+=("$1")
+			shift
+			;;
+	esac
+done
+
+set -- "${POSITIONAL_ARGS[@]}" # restore positional parameters
+
+# Check for conflicting commands
+#if [ $((CREATE + DESTROY + LIST)) -gt 1 ];then
+#	echo "Pick ONE: --create, --destroy, or --list"
+#	exit 1
+#fi
+
+# LIST
+if [ $LIST -eq 1 ]; then list;fi
+
+# CREATE
+if [ $CREATE -eq 1 ]; then create;fi
+
+# DESTROY
+if [ $DESTROY -eq 1 ];then destroy;fi
+
+
+
+# Send e-mail report if there were any minor errors
+if [ $EMAIL_REPORT -eq 1 ];then
+  abnormal_exit
+fi
+
+clean_up_and_exit
+# EOF
