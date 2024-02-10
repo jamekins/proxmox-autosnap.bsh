@@ -1,4 +1,11 @@
-Usage: proxmox-autosnap.bsh --create --destroy --vmid all --type hourly --exclude 108,109 --keep 12
+# Proxmox Autosnap in bash
+
+## Usage
+```bash
+# Example: Take a new snapshot of all VMs except 108 and 109,
+# label it "hourly", keep only 12 snaps with this label
+proxmox-autosnap.bsh --create --destroy --vmid all --type hourly --exclude 108,109 --keep 12
+
   -c --create:
       Create snapshots
 
