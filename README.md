@@ -6,6 +6,9 @@
 # label it "hourly", keep only 12 snaps with this label
 proxmox-autosnap.bsh --create --destroy --vmid all --type hourly --exclude 108,109 --keep 12
 
+# Example: Delete all snapshots for VM 110
+proxmox-autosnap.bsh --destroy --vmid 110 --type all --keep 0
+
   -c --create:
       Create snapshots
 
